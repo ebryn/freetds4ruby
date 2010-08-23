@@ -200,13 +200,17 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
    	ret = ct_connect(conn->connection, servername, CS_NULLTERM);
 	
 	/* free up all the memory */
-	if (username)
+	if (username) {
 		free(username);
-	if (password)
+		username = NULL;
+	}
+	if (password) {
 		free(password);
-	if (servername)
+		password = NULL;
+	}
+	if (servername) {
 		free(servername);
-
+	}
 	if(ret!=CS_SUCCEED) {
 		rb_raise(rb_eIOError, "Connection failed");
 		return Qnil;
@@ -537,6 +541,7 @@ static VALUE statement_Execute(VALUE self) {
 						}
 						
 						free(tempText);
+						tempText = NULL;
 						break;
 					
 					case CS_BINARY_TYPE:
@@ -560,12 +565,17 @@ static VALUE statement_Execute(VALUE self) {
 			    fprintf(stderr, "ct_fetch failed");
 			}
 			
+			free(cols);
+			cols = NULL;
+			free(col_data);
+			col_data = NULL;
+			
 			break;
 		case CS_CMD_SUCCEED:
 			rb_iv_set(self, "@status", Qnil);
 			break;
 		case CS_CMD_FAIL:
-			rb_raise(rb_eIOError, "");
+			rb_raise(rb_eIOError, "Query failed");
 			// rb_iv_set(self, "@status", INT2FIX(0));
 			break;
 		case CS_CMD_DONE:
@@ -585,6 +595,7 @@ static VALUE statement_Execute(VALUE self) {
 	// 	rb_raise(rb_eIOError, error_message);
 	// }
 
+	ct_cmd_drop(cmd);
 	
 	return Qnil;	
 }
@@ -611,6 +622,9 @@ static VALUE statement_Errors(VALUE self) {
 
 static VALUE statement_Drop(VALUE self) {
 	// TODO: Let's free our memory here...
+	rb_iv_set(self, "@query", Qnil);
+	rb_iv_set(self, "@connection", Qnil);
+	
 	return Qnil;
 }
 static VALUE driver_Connect(VALUE self, VALUE connection_hash ) {
