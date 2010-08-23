@@ -8,7 +8,7 @@ class TestFreeTDS < Test::Unit::TestCase
     @config = {
       :servername => 'local', # name of server in your freetds.conf
       :username => 'sa',
-      :password => 'h3althsolv3'
+      :password => 'thYyHtaKxD:xTswNgm}G6L6x4@XbAu'
     }
   end
   
@@ -65,6 +65,26 @@ class TestFreeTDS < Test::Unit::TestCase
     float_statement.execute
     row = float_statement.rows.first
     assert_equal(1.75, row["num"], "floats should match")
+    
+    
+    connection.statement('create table text_field_test ( id int, data text )').execute
+    connection.statement("insert into text_field_test values ( 1, '#{'a'*20}' )").execute
+    connection.statement("insert into text_field_test values ( 2, '#{'a'*500}' )").execute
+    connection.statement("insert into text_field_test values ( 3, '#{'a'*5000000}' )").execute
+    
+    text_statement = connection.statement('select * from text_field_test where id = 1')
+    text_statement.execute
+    row = text_statement.rows.first
+    assert_equal('a'*20, row["data"], "data should match")
+    text_statement = connection.statement('select * from text_field_test where id = 2')
+    text_statement.execute
+    row = text_statement.rows.first
+    assert_equal('a'*500, row["data"], "data should match")
+    text_statement = connection.statement('select * from text_field_test where id = 3')
+    text_statement.execute
+    row = text_statement.rows.first
+    assert_equal('a'*5000000, row["data"], "data should match")
+    
   end
   
   def test_bad_connection
