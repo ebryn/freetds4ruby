@@ -513,14 +513,14 @@ static VALUE statement_Execute(VALUE self) {
 						isNull = 0;
 						tempTextLen = 1; // 1 for \0
 						do {
-							newTempText = realloc((tempTextLen == 1 ? NULL : tempText), tempTextLen + (50 * sizeof(char))); // allocate another 50 chars
+							newTempText = realloc((tempTextLen == 1 ? NULL : tempText), tempTextLen + (1000 * sizeof(char))); // allocate another 1000 chars
 							if (newTempText != NULL) {
 								tempText = newTempText;
 							} else {
-								fprintf(stderr, "realloc error");
+								fprintf(stderr, "realloc error\n");
 							}
 							
-							data_rc = ct_get_data(cmd, (i + 1), tempText + tempTextLen - 1, 50, &output_len);
+							data_rc = ct_get_data(cmd, (i + 1), tempText + tempTextLen - 1, 1000, &output_len);
 
 							if (tempTextLen == 1 && output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
 								isNull = 1;
