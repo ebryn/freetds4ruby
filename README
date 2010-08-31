@@ -8,3 +8,5 @@ Run the tests to see if it's working:
 ruby test.rb
 
 You'll need to obviously have FreeTDS installed first. Testing had occurred on Mac OS X 10.6.4 with FreeTDS 0.82.
+
+For Unicode support, you need to be using a newer TDS protocol version, like 8.0. Otherwise you'll just get errors on retrieval.

@@ -364,6 +364,7 @@ static VALUE statement_Execute(VALUE self) {
 	CS_INT data_rc;
 	int isNull = 0;
 	CS_DATE tempDate;
+	CS_DATETIME tempDateTime;
 
 	TDS_Connection* conn;
 	CS_COMMAND * cmd;
@@ -484,14 +485,36 @@ static VALUE statement_Execute(VALUE self) {
 						break;
 					
 					case CS_DATETIME_TYPE:
-					case CS_DATETIME4_TYPE:
-						col.maxlength = 30;
-						col.datatype  = CS_CHAR_TYPE;
-						col.format    = CS_FMT_NULLTERM;
-						col.locale    = NULL;
-						ct_get_data(cmd, (i + 1), &tempDate, sizeof(tempDate), &output_len);
-						cs_convert(conn->context, &cols[i], &tempDate, &col, output, &output_len);
-						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall(rb_DateTime, rb_intern("parse"), 1, rb_str_new2(output)));
+					// case CS_DATETIME4_TYPE:
+						ct_get_data(cmd, (i + 1), &tempDateTime, sizeof(tempDateTime), &output_len);
+						if ( cs_dt_crack(conn->context, CS_DATETIME_TYPE, &tempDateTime, &date_rec) == CS_SUCCEED ) {
+							if(date_rec.dateyear && date_rec.datemonth && date_rec.datedmonth) {
+								date_parts[0] = INT2FIX(date_rec.dateyear);
+								date_parts[1] = INT2FIX(date_rec.datemonth+1);
+								date_parts[2] = INT2FIX(date_rec.datedmonth);
+								date_parts[3] = INT2FIX(date_rec.datehour);
+								date_parts[4] = INT2FIX(date_rec.dateminute);
+								date_parts[5] = INT2FIX(date_rec.datesecond);
+								date_parts[6] = INT2FIX(date_rec.datemsecond);
+								date_parts[7] = INT2FIX(date_rec.datetzone);
+							
+								// String (fastest known so far, but pushes the burden to ActiveRecord for parsing)
+								// sprintf(output, "%d-%02d-%02d %02d:%02d:%02d.%03d", date_rec.dateyear, date_rec.datemonth+1, date_rec.datedmonth, date_rec.datehour, date_rec.dateminute, date_rec.datesecond, date_rec.datemsecond);
+								// rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(output));
+								
+								// DateTime - this is slow a f*ck
+								//rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]));
+								
+								// Time - way faster than DateTime
+								// FIXME: should we be assuming utc?!
+								rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_cTime, rb_intern("utc"), 6, &date_parts[0]));
+							} else {
+								rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+							}
+						} else {
+							fprintf(stderr, "cs_dt_crack failed\n");
+						}
+						
 						break;
 					
 					case CS_REAL_TYPE:
@@ -633,8 +656,8 @@ static VALUE driver_Connect(VALUE self, VALUE connection_hash ) {
 
 void Init_freetds() {
 	
-	rb_require("date");	
-	rb_DateTime = getClass("DateTime");
+	// rb_require("date");
+	// rb_DateTime = getClass("DateTime");
 	
 	// initialize the tds library	
 	rb_FreeTDS = rb_define_module ("FreeTDS");
