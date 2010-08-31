@@ -472,47 +472,59 @@ static VALUE statement_Execute(VALUE self) {
 					case CS_TINYINT_TYPE:
 					case CS_BIT_TYPE:
 						ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
-						if(tempInt == 1) {
-							rb_hash_aset(row, rb_str_new2(cols[i].name), Qtrue);
+						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						} else {
-							rb_hash_aset(row, rb_str_new2(cols[i].name), Qfalse);
+							if(tempInt == 1) {
+								rb_hash_aset(row, rb_str_new2(cols[i].name), Qtrue);
+							} else {
+								rb_hash_aset(row, rb_str_new2(cols[i].name), Qfalse);
+							}
 						}
 						break;
 					case CS_INT_TYPE:
 					case CS_SMALLINT_TYPE:
 						ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
-						rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(tempInt));
+						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						} else {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(tempInt));
+						}
 						break;
 					
 					case CS_DATETIME_TYPE:
-					// case CS_DATETIME4_TYPE:
+					case CS_DATETIME4_TYPE:
 						ct_get_data(cmd, (i + 1), &tempDateTime, sizeof(tempDateTime), &output_len);
-						if ( cs_dt_crack(conn->context, CS_DATETIME_TYPE, &tempDateTime, &date_rec) == CS_SUCCEED ) {
-							if(date_rec.dateyear && date_rec.datemonth && date_rec.datedmonth) {
-								date_parts[0] = INT2FIX(date_rec.dateyear);
-								date_parts[1] = INT2FIX(date_rec.datemonth+1);
-								date_parts[2] = INT2FIX(date_rec.datedmonth);
-								date_parts[3] = INT2FIX(date_rec.datehour);
-								date_parts[4] = INT2FIX(date_rec.dateminute);
-								date_parts[5] = INT2FIX(date_rec.datesecond);
-								date_parts[6] = INT2FIX(date_rec.datemsecond);
-								date_parts[7] = INT2FIX(date_rec.datetzone);
-							
-								// String (fastest known so far, but pushes the burden to ActiveRecord for parsing)
-								// sprintf(output, "%d-%02d-%02d %02d:%02d:%02d.%03d", date_rec.dateyear, date_rec.datemonth+1, date_rec.datedmonth, date_rec.datehour, date_rec.dateminute, date_rec.datesecond, date_rec.datemsecond);
-								// rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(output));
-								
-								// DateTime - this is slow a f*ck
-								//rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]));
-								
-								// Time - way faster than DateTime
-								// FIXME: should we be assuming utc?!
-								rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_cTime, rb_intern("utc"), 6, &date_parts[0]));
-							} else {
-								rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
-							}
+						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						} else {
-							fprintf(stderr, "cs_dt_crack failed\n");
+							if ( cs_dt_crack(conn->context, CS_DATETIME_TYPE, &tempDateTime, &date_rec) == CS_SUCCEED ) {
+								if(date_rec.dateyear && date_rec.datemonth && date_rec.datedmonth) {
+									date_parts[0] = INT2FIX(date_rec.dateyear);
+									date_parts[1] = INT2FIX(date_rec.datemonth+1);
+									date_parts[2] = INT2FIX(date_rec.datedmonth);
+									date_parts[3] = INT2FIX(date_rec.datehour);
+									date_parts[4] = INT2FIX(date_rec.dateminute);
+									date_parts[5] = INT2FIX(date_rec.datesecond);
+									date_parts[6] = INT2FIX(date_rec.datemsecond);
+									date_parts[7] = INT2FIX(date_rec.datetzone);
+							
+									// String (fastest known so far, but pushes the burden to ActiveRecord for parsing)
+									// sprintf(output, "%d-%02d-%02d %02d:%02d:%02d.%03d", date_rec.dateyear, date_rec.datemonth+1, date_rec.datedmonth, date_rec.datehour, date_rec.dateminute, date_rec.datesecond, date_rec.datemsecond);
+									// rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(output));
+								
+									// DateTime - this is slow a f*ck
+									//rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]));
+								
+									// Time - way faster than DateTime
+									// FIXME: should we be assuming utc?!
+									rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_cTime, rb_intern("utc"), 6, &date_parts[0]));
+								} else {
+									rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+								}
+							} else {
+								fprintf(stderr, "cs_dt_crack failed\n");
+							}
 						}
 						
 						break;
@@ -524,7 +536,11 @@ static VALUE statement_Execute(VALUE self) {
 					case CS_NUMERIC_TYPE:
 					case CS_DECIMAL_TYPE:
 						ct_get_data(cmd, (i + 1), &tempDouble, sizeof(tempDouble), &output_len);
-						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_float_new(tempDouble));
+						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						} else {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), rb_float_new(tempDouble));
+						}
 						break;
 					
 					case CS_CHAR_TYPE:
@@ -576,7 +592,7 @@ static VALUE statement_Execute(VALUE self) {
 						break;
 
 					default:
-						printf("here - %d\n", cols[i].datatype);
+						printf("\nUnexpected datatype: %d\n", cols[i].datatype);
 					}
 
 				
@@ -603,6 +619,9 @@ static VALUE statement_Execute(VALUE self) {
 			break;
 		case CS_CMD_DONE:
 			rb_iv_set(self, "@status", Qnil);
+			break;
+		case CS_STATUS_RESULT:
+			// FIXME: We should probably do something here, right?
 			break;
 		default:
 			fprintf(stderr, "ct_results returned unexpected result type: %d\n", resulttype);
