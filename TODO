@@ -1,3 +1,4 @@
+- bigint support
 X better (faster) date parsing
     Using Time class currently. May need to use DateTime in some cases, but it's uber-slow.
     see link below for mysql2 example:

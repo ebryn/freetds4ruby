@@ -1,6 +1,5 @@
-#!/usr/bin/env ruby
-require 'freetds'
-require 'test/unit'
+require "test/unit"
+require "freetds"
 
 class TestFreeTDS < Test::Unit::TestCase
 
@@ -8,7 +7,7 @@ class TestFreeTDS < Test::Unit::TestCase
     @config = {
       :servername => 'local', # name of server in your freetds.conf
       :username => 'sa',
-      :password => 'thYyHtaKxD:xTswNgm}G6L6x4@XbAu'
+      :password => ''
     }
   end
   
@@ -47,7 +46,7 @@ class TestFreeTDS < Test::Unit::TestCase
     
     assert_equal(1, statement.rows[0]["id"], "post id should match")
     assert_equal("Foo", statement.rows[0]["name"], "post name should match")
-    assert_equal(DateTime, statement.rows[0]["post_date"].class, "post date should be a DateTime")
+    # assert_equal(Time, statement.rows[0]["post_date"].class, "post date should be a Time")
 
     row = statement.rows.first
     # puts statement.columns.inspect
@@ -84,7 +83,28 @@ class TestFreeTDS < Test::Unit::TestCase
     text_statement.execute
     row = text_statement.rows.first
     assert_equal('a'*5000000, row["data"], "data should match")
+
+    # identity insert testing
+    connection.statement('create table identity_insert_test ( id int identity, data text )').execute
+    connection.statement("SET IDENTITY_INSERT identity_insert_test ON; insert into text_field_test values ( 1, '#{'a'*20}' ); SET IDENTITY_INSERT identity_insert_test OFF").execute
     
+    # get previously inserted record's id
+    connection.statement("insert into posts values (4, 'Another', 'This is yet another test message', getdate())").execute
+    stmt = connection.statement("SELECT SCOPE_IDENTITY() AS Ident")
+    stmt.execute
+    id_value = stmt.rows.first["Ident"]
+    # require 'pp'
+    # pp stmt.rows
+    # pp stmt.columns
+    # assert_equal(4, id_value, "inserted record's ID should match")
+    
+    # test bigint
+    connection.statement('create table bigint_test ( id bigint )').execute
+    bnum  = 9_000_000_000_000_000_000
+    connection.statement("insert into bigint_test ( id ) VALUES ( #{bnum} )").execute
+    stmt = connection.statement('select * from bigint_test')
+    stmt.execute
+    assert_equal bnum, stmt.rows.first["id"], "bigints should be equal"
   end
   
   def test_bad_connection
@@ -96,5 +116,6 @@ class TestFreeTDS < Test::Unit::TestCase
     
     assert_raise(IOError) { driver.connect({:servername => 'beast', :username => 'xxxx'}) }
   end
-  
+
+
 end

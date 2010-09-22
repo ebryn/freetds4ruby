@@ -89,6 +89,10 @@ static VALUE getClass(const char *name)
    return(klass);
 }
 
+void error_message(char *msg) {
+	fprintf(stderr, "ERROR: %s\n", msg);
+}
+
 /*** end of helper functions ***/
 
 static void free_tds_connection(void *p) {
@@ -337,6 +341,18 @@ static char* column_type_name(CS_DATAFMT column) {
 	return column_type;
 }
 
+// CS_RETCODE CS_PUBLIC clientmsg_cb(CS_CONTEXT *context, CS_CONNECTION *connection, CS_CLIENTMSG *message) {
+// 	// error_message(message->msgstring);
+// 	return CS_SUCCEED;
+// }
+// CS_RETCODE CS_PUBLIC servermsg_cb(CS_CONTEXT *context, CS_CONNECTION *connection, CS_SERVERMSG *message) {
+// 	if (message->severity > 0) {
+// 		fprintf(stderr, "msgnumber: %d, state: %d, severity: %d\n", message->msgnumber, message->state, message->severity);
+// 		error_message(message->text);
+// 	}
+// 	return CS_SUCCEED;
+// }
+
 static VALUE statement_Execute(VALUE self) {
 	int i;
 	CS_DATAFMT col;
@@ -348,16 +364,23 @@ static VALUE statement_Execute(VALUE self) {
 	CS_INT col_len;
 	CS_INT row_count = 0;
 	CS_INT rows_read;
-
+	
+	CS_INT num_errors = 0;
+	CS_SERVERMSG servermsg;
+	VALUE err;
+	char *error_msg;
+	
 	struct timeval start, stop;
 	int print_rows = 1;
 	char message[128];
 	char* buf;
 	CS_DATEREC date_rec;
-	char output[30];
+	char output[200];
 	CS_INT output_len;
 	int tempInt;
+	CS_BIGINT tempBigInt;
 	double tempDouble;
+	CS_NUMERIC tempNumeric;
 	char* tempText;
 	char* newTempText;
 	int tempTextLen;
@@ -407,10 +430,46 @@ static VALUE statement_Execute(VALUE self) {
 	errors = rb_ary_new();
 	rb_iv_set(self, "@errors", errors);
 
+	ct_diag(conn->connection, CS_INIT, CS_UNUSED, CS_UNUSED, NULL);
+	// if ( ct_callback(conn->context, NULL, CS_SET, CS_CLIENTMSG_CB, (CS_VOID *)clientmsg_cb) != CS_SUCCEED ) {
+	// 	error_message("ct_callback CS_CLIENTMSG_CB failed\n");
+	// }
+	// if ( ct_callback(conn->context, NULL, CS_SET, CS_SERVERMSG_CB, (CS_VOID *)servermsg_cb) != CS_SUCCEED ) {
+	// 	error_message("ct_callback CS_SERVERMSG_CB failed\n");
+	// }
 	ct_cmd_alloc(conn->connection, &cmd);
 	ct_command(cmd, CS_LANG_CMD, buf, CS_NULLTERM, CS_UNUSED);
 	ct_send(cmd);
 
+	if ( ct_diag(conn->connection, CS_STATUS, CS_SERVERMSG_TYPE, CS_UNUSED, &num_errors) != CS_SUCCEED ) {
+		error_message("ct_diag CS_STATUS CS_SERVERMSG_TYPE failed");
+	}
+	if (num_errors > 0) {
+		// fprintf(stderr, "%d errors found\n", num_errors);
+		for (i = 0; i < num_errors; i++) {
+			if ( ct_diag(conn->connection, CS_GET, CS_SERVERMSG_TYPE, i+1, &servermsg) != CS_SUCCEED ) {
+				error_message("ct_diag CS_GET CS_SERVERMSG_TYPE failed");
+			}
+			if (servermsg.severity > 0) {
+				// error_message(servermsg.text);
+				rb_ary_push(errors, rb_str_new2(servermsg.text));
+			}
+		}
+		if ( ct_diag(conn->connection, CS_CLEAR, CS_SERVERMSG_TYPE, CS_UNUSED, NULL) != CS_SUCCEED ) {
+			error_message("ct_diag CS_CLEAR CS_SERVERMSG_TYPE failed");
+		}
+	}
+	
+	// Raise errors from ct_command/ct_send
+	err = rb_funcall(errors, rb_intern("first"), 0); // FIXME: should probably display all errors instead of just first
+	if(RTEST(err)) {
+		error_msg = value_to_cstr(err);
+		rb_raise(rb_eIOError, error_msg);
+
+		ct_cmd_drop(cmd);
+
+		return Qnil;
+	}
 	// TODO:
 	// - We should have an array of malloc'd cols
 	// - Then we bind / fetch to those
@@ -444,9 +503,18 @@ static VALUE statement_Execute(VALUE self) {
 			// Get column information
 			for (i = 0; i < num_cols; i++) {
 				rc = ct_describe(cmd, (i+1), &cols[i]);
+				if ( rc != CS_SUCCEED ) {
+					fprintf(stderr, "ct_describe failed on col #%d", i+1);
+				}
 
 				column_value = rb_hash_new();
-				rb_hash_aset(column_value, column_name, rb_str_new2(cols[i].name));
+				// fprintf(stderr, "%s\n", cols[i].name);
+				if (cols[i].name) {
+					rb_hash_aset(column_value, column_name, rb_str_new2(cols[i].name));
+				} else {
+					rb_hash_aset(column_value, column_name, Qnil);
+				}
+				
 				rb_hash_aset(column_value, column_type, rb_str_new2(column_type_name(cols[i])));
 				rb_hash_aset(column_value, column_size, INT2FIX(cols[i].maxlength));
 				rb_hash_aset(column_value, column_scale, INT2FIX(cols[i].scale));
@@ -464,14 +532,14 @@ static VALUE statement_Execute(VALUE self) {
 				
 				// Create Ruby objects
 				for (i = 0; i < num_cols; i++) {
-					if (col_data[i].indicator == -1) {
-						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
-						continue;
-					}
+					// if (col_data[i].indicator == -1) {
+					// 	rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+					// 	continue;
+					// }
 					switch (cols[i].datatype) {
 					case CS_TINYINT_TYPE:
 					case CS_BIT_TYPE:
-						ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
+						data_rc = ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
 						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						} else {
@@ -481,20 +549,22 @@ static VALUE statement_Execute(VALUE self) {
 								rb_hash_aset(row, rb_str_new2(cols[i].name), Qfalse);
 							}
 						}
+						tempInt = -1;
 						break;
 					case CS_INT_TYPE:
 					case CS_SMALLINT_TYPE:
-						ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
+						data_rc = ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
 						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						} else {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(tempInt));
 						}
+						tempInt = -1;
 						break;
 					
 					case CS_DATETIME_TYPE:
 					case CS_DATETIME4_TYPE:
-						ct_get_data(cmd, (i + 1), &tempDateTime, sizeof(tempDateTime), &output_len);
+						data_rc = ct_get_data(cmd, (i + 1), &tempDateTime, sizeof(tempDateTime), &output_len);
 						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						} else {
@@ -510,15 +580,15 @@ static VALUE statement_Execute(VALUE self) {
 									date_parts[7] = INT2FIX(date_rec.datetzone);
 							
 									// String (fastest known so far, but pushes the burden to ActiveRecord for parsing)
-									// sprintf(output, "%d-%02d-%02d %02d:%02d:%02d.%03d", date_rec.dateyear, date_rec.datemonth+1, date_rec.datedmonth, date_rec.datehour, date_rec.dateminute, date_rec.datesecond, date_rec.datemsecond);
-									// rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(output));
+									sprintf(output, "%d-%02d-%02d %02d:%02d:%02d.%03d", date_rec.dateyear, date_rec.datemonth+1, date_rec.datedmonth, date_rec.datehour, date_rec.dateminute, date_rec.datesecond, date_rec.datemsecond);
+									rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(output));
 								
 									// DateTime - this is slow a f*ck
 									//rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]));
 								
 									// Time - way faster than DateTime
 									// FIXME: should we be assuming utc?!
-									rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_cTime, rb_intern("utc"), 6, &date_parts[0]));
+									// rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall2(rb_cTime, rb_intern("utc"), 6, &date_parts[0]));
 								} else {
 									rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 								}
@@ -526,23 +596,49 @@ static VALUE statement_Execute(VALUE self) {
 								fprintf(stderr, "cs_dt_crack failed\n");
 							}
 						}
-						
+						// tempDateTime = 0; // not sure how to clear this...
 						break;
 					
-					case CS_REAL_TYPE:
+					// case CS_REAL_TYPE:
 					case CS_FLOAT_TYPE:
-					case CS_MONEY_TYPE:
-					case CS_MONEY4_TYPE: 
-					case CS_NUMERIC_TYPE:
-					case CS_DECIMAL_TYPE:
-						ct_get_data(cmd, (i + 1), &tempDouble, sizeof(tempDouble), &output_len);
+					// case CS_MONEY_TYPE:
+					// case CS_MONEY4_TYPE: 
+						data_rc = ct_get_data(cmd, (i + 1), &tempDouble, sizeof(tempDouble), &output_len);
 						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						} else {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), rb_float_new(tempDouble));
 						}
+						tempDouble = -1.0;
 						break;
 					
+					// case CS_BIGINT_TYPE:
+					// 	error_message("HELLO BIGINT!");
+					// 	break;
+						
+					case CS_DECIMAL_TYPE:
+					case CS_NUMERIC_TYPE:
+						// fprintf(stderr, "CS_NUMERIC_TYPE detected - name: %s\n", cols[i].name);
+						
+						data_rc = ct_get_data(cmd, (i + 1), &tempNumeric, sizeof(tempNumeric), &output_len);
+						if (output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						} else {
+							// fprintf(stderr, "tempNumeric output_len: %d, precision: %d, scale: %d, array: %s\n", output_len, tempNumeric.precision, tempNumeric.scale, tempNumeric.array);
+							col.datatype = CS_CHAR_TYPE;
+							col.format = CS_FMT_NULLTERM;
+							col.maxlength = 200;
+							// col.maxlength = cols[i].precision + 1;
+							data_rc = cs_convert(conn->context, &cols[i], &tempNumeric, &col, output, &output_len);
+							if ( data_rc != CS_SUCCEED ) {
+								error_message("CS_NUMERIC_TYPE conversion failed");
+								fprintf(stderr, "cs_convert returned: %d\n", data_rc);
+							}
+							// fprintf(stderr, "numeric output_len: %d, output: %s\n", output_len, output);
+							rb_hash_aset(row, rb_str_new2(cols[i].name), LL2NUM(strtoll(output, NULL, 10)));
+						}
+						break;
+						
 					case CS_CHAR_TYPE:
 					case CS_LONGCHAR_TYPE:
 					case CS_TEXT_TYPE:
@@ -592,6 +688,7 @@ static VALUE statement_Execute(VALUE self) {
 						break;
 
 					default:
+						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						printf("\nUnexpected datatype: %d\n", cols[i].datatype);
 					}
 
@@ -614,7 +711,32 @@ static VALUE statement_Execute(VALUE self) {
 			rb_iv_set(self, "@status", Qnil);
 			break;
 		case CS_CMD_FAIL:
-			rb_raise(rb_eIOError, "Query failed");
+			if ( ct_diag(conn->connection, CS_STATUS, CS_SERVERMSG_TYPE, CS_UNUSED, &num_errors) != CS_SUCCEED ) {
+				error_message("ct_diag CS_STATUS CS_SERVERMSG_TYPE failed");
+			}
+			if (num_errors > 0) {
+				// fprintf(stderr, "%d errors found\n", num_errors);
+				for (i = 0; i < num_errors; i++) {
+					if ( ct_diag(conn->connection, CS_GET, CS_SERVERMSG_TYPE, i+1, &servermsg) != CS_SUCCEED ) {
+						error_message("ct_diag CS_GET CS_SERVERMSG_TYPE failed");
+					}
+					if (servermsg.severity > 0) {
+						// error_message(servermsg.text);
+						rb_ary_push(errors, rb_str_new2(servermsg.text));
+					}
+				}
+				if ( ct_diag(conn->connection, CS_CLEAR, CS_SERVERMSG_TYPE, CS_UNUSED, NULL) != CS_SUCCEED ) {
+					error_message("ct_diag CS_CLEAR CS_SERVERMSG_TYPE failed");
+				}
+			}
+		
+			err = rb_funcall(errors, rb_intern("first"), 0); // FIXME: should probably display all errors instead of just first
+			if(RTEST(err)) {
+				error_msg = value_to_cstr(err);
+				rb_raise(rb_eIOError, error_msg);
+			} else {
+				rb_raise(rb_eIOError, "CS_CMD_FAIL without server error message");
+			}
 			// rb_iv_set(self, "@status", INT2FIX(0));
 			break;
 		case CS_CMD_DONE:
@@ -628,14 +750,6 @@ static VALUE statement_Execute(VALUE self) {
 			break;
 		}
 	}
-	
-	// tds_set_parent(conn->tds, NULL);
-
-	// VALUE err = rb_funcall(errors, rb_intern("first"), 0);
-	// if(RTEST(err)) {
-	// 	char* error_message = value_to_cstr(rb_hash_aref(err, rb_str_new2("message")));
-	// 	rb_raise(rb_eIOError, error_message);
-	// }
 
 	ct_cmd_drop(cmd);
 	
